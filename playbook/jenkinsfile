@@ -1,0 +1,13 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/jagan-prakash/ansible.git',
+                    credentialsId: 'Ansible-Integration-Jenkins'
+            }
+        }
+    }
+}
