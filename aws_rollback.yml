@@ -1,0 +1,61 @@
+- name: Automated Infrastructure Rollback to Snapshot
+  hosts: all
+  gather_facts: no
+  vars:
+    # Captures the snapshot ID generated during Step 1 of the workflow
+    target_snapshot_id: "{{ hostvars[inventory_hostname]['snapshot_result']['snapshot_id'] }}"
+  tasks:
+    - name: Initiate Automated Rollback Sequence
+      block:
+        # 1. Stop the corrupted server
+        - name: Gracefully stop the failed EC2 instance
+          amazon.aws.ec2_instance:
+            instance_ids: "{{ ansible_ec2_instance_id }}"
+            state: stopped
+            wait: yes
+          delegate_to: localhost
+
+        # 2. Create a clean volume from our pre-patch snapshot
+        - name: Create a healthy restoration volume from the snapshot
+          amazon.aws.ec2_vol:
+            snapshot: "{{ target_snapshot_id }}"
+            zone: "{{ ansible_ec2_placement_zone }}"
+            tags:
+              Name: "Restored-Root-Vol-{{ inventory_hostname }}"
+          delegate_to: localhost
+          register: new_volume
+
+        # 3. Detach the corrupted volume
+        - name: Detach the failed root volume
+          amazon.aws.ec2_vol:
+            instance: "{{ ansible_ec2_instance_id }}"
+            device_name: "/dev/sda1"
+            state: absent
+          delegate_to: localhost
+
+        # 4. Attach the healthy, restored volume
+        - name: Attach the restored snapshot volume as root
+          amazon.aws.ec2_vol:
+            instance: "{{ ansible_ec2_instance_id }}"
+            volume_id: "{{ new_volume.volume_id }}"
+            device_name: "/dev/sda1"
+            state: present
+          delegate_to: localhost
+
+        # 5. Start the server back up in its pre-patch state
+        - name: Start the restored EC2 instance
+          amazon.aws.ec2_instance:
+            instance_ids: "{{ ansible_ec2_instance_id }}"
+            state: running
+            wait: yes
+          delegate_to: localhost
+
+      always:
+        # 6. Enterprise Notification Loop
+        - name: Update ServiceNow and notify team of rollback
+          community.general.mail:
+            host: ://corporate.com
+            to: "operations-alerts@company.com"
+            subject: "CRITICAL: Patching Failed - Automated Rollback Completed for {{ inventory_hostname }}"
+            body: "Server {{ inventory_hostname }} failed post-patching health checks. AAP has successfully reverted the instance to snapshot {{ target_snapshot_id }}."
+          delegate_to: localhost
