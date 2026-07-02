@@ -1,0 +1,53 @@
+- name: Enterprise OS Patching and Validation
+  hosts: all
+  serial: "20%"               # Batches the 200 servers into groups of 40 at a time
+  max_fail_percentage: 10%    # Circuit breaker: stops the playbook if more than 4 servers fail
+  become: yes
+  tasks:
+    - name: Execute Patching with Error Handling
+      block:
+        # 1. OS Patching
+        - name: Apply all available updates
+          ansible.builtin.dnf:
+            name: "*"
+            state: latest
+          when: ansible_os_family == "RedHat"
+
+        # 2. Smart Reboot
+        - name: Reboot server if updates were applied
+          ansible.builtin.reboot:
+            reboot_timeout: 300
+            connect_timeout: 30
+            msg: "Rebooting post-patching execution via AAP"
+
+        # 3. Post-Reboot Connection Check
+        - name: Wait for SSH daemon to respond
+          ansible.builtin.wait_for_connection:
+            timeout: 120
+
+        # 4. Service Health Validation
+        - name: Gather service facts
+          ansible.builtin.service_facts:
+
+        - name: Verify critical application service is running
+          ansible.builtin.assert:
+            that:
+              - ansible_facts.services['nginx.service'].state == 'running'
+            fail_msg: "Application service failed to start after reboot!"
+
+        # 5. Endpoint Validation
+        - name: Check application web endpoint health
+          ansible.builtin.uri:
+            url: "http://localhost:8080/health"
+            status_code: 200
+          register: endpoint_check
+
+      rescue:
+        # This section triggers ONLY if any task inside the 'block' above fails
+        - name: Log failure to console
+          ansible.builtin.debug:
+            msg: "CRITICAL: Validation failed on {{ inventory_hostname }}. Initiating fallback sequence."
+
+        - name: Force failure state for AAP tracking
+          ansible.builtin.fail:
+            msg: "System state validation failed post-patching."
