@@ -1,0 +1,17 @@
+- name: Pre-Patch AWS EC2 Volume Snapshot
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Take snapshot of root volume
+      amazon.aws.ec2_snapshot:
+        instance_id: "{{ ansible_ec2_instance_id }}"
+        device_name: "/dev/sda1"
+        description: "Pre-patching backup for {{ inventory_hostname }}"
+        last_present: 1
+      delegate_to: localhost
+      register: snapshot_result
+
+    - name: Verify snapshot creation succeeded
+      ansible.builtin.fail:
+        msg: "Snapshot failed for {{ inventory_hostname }}"
+      when: snapshot_result.snapshot_id is not defined
